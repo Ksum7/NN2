@@ -1,7 +1,10 @@
-﻿using System;
+﻿using Accord.Math;
+using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Drawing;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -10,10 +13,9 @@ namespace NeuralNetwork2
 {
     public partial class NeuralNetworksStand : Form
     {
-        /// <summary>
-        /// Генератор изображений (образов)
-        /// </summary>
-        GenerateImage generator = new GenerateImage();
+        DataHolder dataHolder = new DataHolder();
+
+        Camera form = null;
 
         /// <summary>
         /// Текущая выбранная через селектор нейросеть
@@ -43,9 +45,18 @@ namespace NeuralNetwork2
             this.networksFabric = networksFabric;
             netTypeBox.Items.AddRange(this.networksFabric.Keys.Select(s => (object) s).ToArray());
             netTypeBox.SelectedIndex = 0;
-            generator.FigureCount = (int) classCounter.Value;
-            button3_Click(this, null);
-            pictureBox1.Image = Properties.Resources.Title;
+
+            string currentPath = Directory.GetParent(Directory.GetCurrentDirectory()).Parent.FullName;
+
+            //prepareData($"{currentPath}\\data\\raw_train_data", $"{currentPath}\\data\\train_data");
+            dataHolder.loadData(
+                $"{currentPath}\\data\\augmented_train",
+                $"{currentPath}\\data\\augmented_train",
+                $"{currentPath}\\data\\augmented_train_classes.txt",
+                $"{currentPath}\\data\\augmented_train_classes.txt"
+            );
+
+            recreateNetButton_Click(this, null);
         }
 
         public void UpdateLearningInfo(double progress, double error, TimeSpan elapsedTime)
@@ -68,16 +79,16 @@ namespace NeuralNetwork2
         {
             label1.ForeColor = figure.Correct() ? Color.Green : Color.Red;
 
-            label1.Text = "Распознано : " + figure.recognizedClass;
+            label1.Text = "Распознано: " + figure.recognizedClass;
 
             label8.Text = string.Join("\n", figure.Output.Select(d => d.ToString(CultureInfo.InvariantCulture)));
-            pictureBox1.Image = generator.GenBitmap();
+            pictureBox1.Image = figure.GenBitmap();
             pictureBox1.Invalidate();
         }
 
         private void pictureBox1_MouseClick(object sender, MouseEventArgs e)
         {
-            Sample fig = generator.GenerateFigure();
+            Sample fig = dataHolder.getRandomTestImage();
 
             Net.Predict(fig);
 
@@ -95,10 +106,8 @@ namespace NeuralNetwork2
             trainOneButton.Enabled = false;
 
             //  Создаём новую обучающую выборку
-            SamplesSet samples = new SamplesSet();
+            SamplesSet samples = dataHolder.trainData;
 
-            for (int i = 0; i < training_size; i++)
-                samples.AddSample(generator.GenerateFigure());
             try
             {
                 //  Обучение запускаем асинхронно, чтобы не блокировать форму
@@ -135,10 +144,8 @@ namespace NeuralNetwork2
             Enabled = false;
             //  Тут просто тестирование новой выборки
             //  Создаём новую обучающую выборку
-            SamplesSet samples = new SamplesSet();
 
-            for (int i = 0; i < (int) TrainingSizeCounter.Value; i++)
-                samples.AddSample(generator.GenerateFigure());
+            SamplesSet samples = dataHolder.testData;
 
             double accuracy = samples.TestNeuralNetwork(Net);
 
@@ -148,45 +155,17 @@ namespace NeuralNetwork2
             Enabled = true;
         }
 
-        private void button3_Click(object sender, EventArgs e)
-        {
-            //  Проверяем корректность задания структуры сети
-            int[] structure = CurrentNetworkStructure();
-            if (structure.Length < 2 || structure[0] != 400 ||
-                structure[structure.Length - 1] != generator.FigureCount)
-            {
-                MessageBox.Show(
-                    $"В сети должно быть более двух слоёв, первый слой должен содержать 400 нейронов, последний - ${generator.FigureCount}",
-                    "Ошибка", MessageBoxButtons.OK);
-                return;
-            }
-
-            // Чистим старые подписки сетей
-            foreach (var network in networksCache.Values)
-                network.TrainProgress -= UpdateLearningInfo;
-            // Пересоздаём все сети с новой структурой
-            networksCache = networksCache.ToDictionary(oldNet => oldNet.Key, oldNet => CreateNetwork(oldNet.Key));
-        }
-
         private int[] CurrentNetworkStructure()
         {
             return netStructureBox.Text.Split(';').Select(int.Parse).ToArray();
         }
 
-        private void classCounter_ValueChanged(object sender, EventArgs e)
-        {
-            generator.FigureCount = (int) classCounter.Value;
-            var vals = netStructureBox.Text.Split(';');
-            if (!int.TryParse(vals.Last(), out _)) return;
-            vals[vals.Length - 1] = classCounter.Value.ToString();
-            netStructureBox.Text = vals.Aggregate((partialPhrase, word) => $"{partialPhrase};{word}");
-        }
-
         private void btnTrainOne_Click(object sender, EventArgs e)
         {
             if (Net == null) return;
-            Sample fig = generator.GenerateFigure();
-            pictureBox1.Image = generator.GenBitmap();
+            if (form != null) form.Close();
+            Sample fig = dataHolder.getRandomTestImage();
+            pictureBox1.Image = fig.GenBitmap();
             pictureBox1.Invalidate();
             Net.Train(fig, 0.00005, parallelCheckBox.Checked);
             set_result(fig);
@@ -214,29 +193,23 @@ namespace NeuralNetwork2
             infoStatusLabel.Text = "Тестировать нейросеть на тестовой выборке такого же размера";
         }
 
-        private void label11_Click(object sender, EventArgs e)
+        private void btnCamera_Click(object sender, EventArgs e)
         {
-
+            form = new Camera(Net, dataHolder);
+            form.Show();
         }
 
-        private void label3_Click(object sender, EventArgs e)
+        private void recreateNetButton_Click(object sender, EventArgs e)
         {
+            if (form != null) form.Close();
+            //  Проверяем корректность задания структуры сети
+            int[] structure = CurrentNetworkStructure();
 
-        }
-
-        private void lRateTxt_TextChanged(object sender, EventArgs e)
-        {
-
-        }
-
-        private void NeuralNetworksStand_Load(object sender, EventArgs e)
-        {
-
-        }
-
-        private void numericUpDown1_ValueChanged(object sender, EventArgs e)
-        {
-
+            // Чистим старые подписки сетей
+            foreach (var network in networksCache.Values)
+                network.TrainProgress -= UpdateLearningInfo;
+            // Пересоздаём все сети с новой структурой
+            networksCache = networksCache.ToDictionary(oldNet => oldNet.Key, oldNet => CreateNetwork(oldNet.Key));
         }
     }
 }

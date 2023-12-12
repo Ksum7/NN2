@@ -1,4 +1,5 @@
-﻿using AForge.Imaging;
+﻿using Accord.Statistics.Moving;
+using AForge.Imaging;
 using AForge.Imaging.Filters;
 using System;
 using System.Drawing;
@@ -7,7 +8,7 @@ namespace NeuralNetwork2
 {
     internal class Settings
     {
-        private int _border = 20;
+        private int _border = 10;
         public int border
         {
             get
@@ -43,19 +44,21 @@ namespace NeuralNetwork2
         public Size processedDesiredSize = new Size(500, 500);
 
         public int margin = 10;
-        public int top = 40;
-        public int left = 40;
+        public int top = 20;
+        public int left = 20;
 
         /// <summary>
         /// Второй этап обработки
         /// </summary>
-        public bool processImg = false;
+        public bool processImg = true;
 
         /// <summary>
         /// Порог при отсечении по цвету 
         /// </summary>
-        public byte threshold = 120;
-        public float differenceLim = 0.15f;
+        public byte threshold = 20;
+        public float differenceLim = (float)20.0 / 255;
+/*        public byte threshold = 120;
+        public float differenceLim = 0.15f;*/
 
         public void incTop() { if (top < 2 * _border) ++top; }
         public void decTop() { if (top > 0) --top; }
@@ -79,21 +82,11 @@ namespace NeuralNetwork2
         /// </summary>
         public Settings settings = new Settings();
 
-
-
-        public MagicEye()
-        {
-        }
-
+        public MagicEye(){}
         public bool ProcessImage(Bitmap bitmap)
         {
-            // На вход поступает необработанное изображение с веб-камеры
 
-            //  Минимальная сторона изображения (обычно это высота)
-            if (bitmap.Height > bitmap.Width)
-                throw new Exception("К такой забавной камере меня жизнь не готовила!");
-            //  Можно было, конечено, и не кидаться эксепшенами в истерике, но идите и купите себе нормальную камеру!
-            int side = bitmap.Height;
+            original = bitmap;
 
             Grayscale grayFilter = new Grayscale(0.2125, 0.7154, 0.0721);
             var uProcessed = grayFilter.Apply(AForge.Imaging.UnmanagedImage.FromManagedImage(original));
@@ -129,12 +122,12 @@ namespace NeuralNetwork2
             string rez = "Обработка";
 
             ///  Инвертируем изображение
-            Invert InvertFilter = new Invert();
+            AForge.Imaging.Filters.Invert InvertFilter = new AForge.Imaging.Filters.Invert();
             InvertFilter.ApplyInPlace(unmanaged);
 
             ///    Создаём BlobCounter, выдёргиваем самый большой кусок, масштабируем, пересечение и сохраняем
             ///    изображение в эксклюзивном использовании
-            BlobCounterBase bc = new BlobCounter();
+            AForge.Imaging.BlobCounterBase bc = new AForge.Imaging.BlobCounter();
 
             bc.FilterBlobs = true;
             bc.MinWidth = 3;
@@ -166,7 +159,7 @@ namespace NeuralNetwork2
                 if (ly > rects[i].Y) ly = rects[i].Y;
                 if (rx < rects[i].X + rects[i].Width) rx = rects[i].X + rects[i].Width;
                 if (ry < rects[i].Y + rects[i].Height) ry = rects[i].Y + rects[i].Height;
-            }/*
+            }
             if (rx <= lx || ry <= ly)
             {
                 rx = unmanaged.Width;
@@ -174,6 +167,14 @@ namespace NeuralNetwork2
                 lx = 0;
                 ly = 0;
             }
+            // Обрезаем края, оставляя только центральные блобчики
+            AForge.Imaging.Filters.Crop cropFilter = new AForge.Imaging.Filters.Crop(new Rectangle(lx, ly, rx - lx, ry - ly));
+            unmanaged = cropFilter.Apply(unmanaged);
+
+            //  Масштабируем до 100x100
+            AForge.Imaging.Filters.ResizeBilinear scaleFilter = new AForge.Imaging.Filters.ResizeBilinear(100, 100);
+            unmanaged = scaleFilter.Apply(unmanaged);
+
             lx = unmanaged.Width;
             ly = unmanaged.Height;
             rx = 0;
@@ -204,7 +205,7 @@ namespace NeuralNetwork2
                 ry = unmanaged.Height;
                 lx = 0;
                 ly = 0;
-            }*/
+            }
             if (rx - lx < ry - ly)
             {
                 int centerX = (rx + lx) / 2;
@@ -217,19 +218,14 @@ namespace NeuralNetwork2
                 ry = centerY + (rx - lx) / 2;
                 ly = centerY - (rx - lx) / 2;
             }
-
-
-            // Обрезаем края, оставляя только центральные блобчики
-            Crop cropFilter = new Crop(new Rectangle(lx, ly, rx - lx, ry - ly));
+            cropFilter = new AForge.Imaging.Filters.Crop(new Rectangle(lx, ly, rx - lx, ry - ly));
             unmanaged = cropFilter.Apply(unmanaged);
-
-            //  Масштабируем до 50x50
-            ResizeBilinear scaleFilter = new ResizeBilinear(50, 50);
+            scaleFilter = new AForge.Imaging.Filters.ResizeBilinear(48, 48);
             unmanaged = scaleFilter.Apply(unmanaged);
-
+            Threshold thresholdFilter = new Threshold(90);
+            unmanaged = thresholdFilter.Apply(unmanaged);
             return rez;
         }
-
     }
 }
 

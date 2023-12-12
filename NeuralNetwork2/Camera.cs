@@ -12,6 +12,9 @@ using System.Diagnostics;
 using System.Windows.Forms;
 using AForge.Video;
 using AForge.Video.DirectShow;
+using System.Globalization;
+using System.Reflection.Emit;
+using System.IO;
 
 namespace NeuralNetwork2
 {
@@ -66,7 +69,6 @@ namespace NeuralNetwork2
             ticksLabel.Text = "Тики : " + sw.Elapsed.ToString();
             originalImageBox.Image = controller.GetOriginalImage();
             processedImgBox.Image = controller.GetProcessedImage();
-            statusLabel.Text = $"Кажется, это {controller.getCurrentType()}";
         }
 
         /// <summary>
@@ -79,13 +81,14 @@ namespace NeuralNetwork2
             return;
         }
 
-        private BaseNetwork neuralNetwork;
-        private DatasetProcessor dataset;
-        public Camera(BaseNetwork network, DatasetProcessor datasetProcessor)
+        private BaseNetwork network;
+        private DataHolder dataHolder;
+        public Camera(BaseNetwork network, DataHolder dataHolder)
         {
             InitializeComponent();
-            neuralNetwork = network;
-            dataset = datasetProcessor;
+            this.network = network;
+            this.dataHolder = dataHolder;
+
             // Список камер получаем
             videoDevicesList = new FilterInfoCollection(FilterCategory.VideoInputDevice);
             foreach (FilterInfo videoDevice in videoDevicesList)
@@ -100,7 +103,7 @@ namespace NeuralNetwork2
             {
                 MessageBox.Show("А нет у вас камеры!", "Ошибочка", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
-            controller = new Controller(new FormUpdateDelegate(UpdateFormFields),network,dataset);
+            controller = new Controller(new FormUpdateDelegate(UpdateFormFields));
             //            updateTmr = new System.Threading.Timer(Tick, evnt, 500, 100);
         }
 
@@ -109,29 +112,66 @@ namespace NeuralNetwork2
             //  Время засекаем
             sw.Restart();
 
-            //  Отправляем изображение на обработку, и выводим оригинал (с раскраской) и разрезанные изображения
             if (controller.Ready)
 
-#pragma warning disable CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
+                #pragma warning disable CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
                 controller.ProcessImage((Bitmap)eventArgs.Frame.Clone());
-#pragma warning restore CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
+                #pragma warning restore CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
 
-            //  Это выкинуть в отдельный поток!
-            //  И отдать делегат? Или просто проверять значение переменной?
-            //  Тут хрень какая-то
-
-            //currentState = Stage.Thinking;
-            //sage.solveState(processor.currentDeskState, 16, 7);
         }
 
-        private void btnStart_Click(object sender, EventArgs e)
+        private void tresholdTrackBar_ValueChanged(object sender, EventArgs e)
+        {
+            controller.settings.threshold = (byte)tresholdTrackBar.Value;
+            controller.settings.differenceLim = (float)tresholdTrackBar.Value / tresholdTrackBar.Maximum;
+        }
+
+        private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
+        {
+            if (updateTmr != null)
+                updateTmr.Dispose();
+
+            //  Как-то надо ещё робота подождать, если он работает
+
+            if (videoSource != null && videoSource.IsRunning)
+            {
+                videoSource.SignalToStop();
+            }
+        }
+
+        private void cmbVideoSource_SelectionChangeCommitted(object sender, EventArgs e)
+        {
+            var vcd = new VideoCaptureDevice(videoDevicesList[cmbVideoSource.SelectedIndex].MonikerString);
+            resolutionsBox.Items.Clear();
+            for (int i = 0; i < vcd.VideoCapabilities.Length; i++)
+                resolutionsBox.Items.Add(vcd.VideoCapabilities[i].FrameSize.ToString());
+            resolutionsBox.SelectedIndex = 0;
+        }
+
+        private void set_result(Sample figure)
+        {
+            recognizingResult.ForeColor = figure.actualClass == SymbolType.Undef ? Color.Black : figure.Correct() ? Color.Green : Color.Red;
+
+            recognizingResult.Text = "Распознано: " + figure.recognizedClass;
+
+            frameBox.Image = figure.GenBitmap();
+            frameBox.Invalidate();
+        }
+
+        int i = 0;
+        private void btnSave_Click(object sender, EventArgs e)
+        {
+            var img = processedImgBox.Image;
+            img.Save($@"{i}.jpeg", ImageFormat.Jpeg);
+            i++;
+        }
+
+        private void StartButton_Click(object sender, EventArgs e)
         {
             if (videoSource == null)
             {
                 var vcd = new VideoCaptureDevice(videoDevicesList[cmbVideoSource.SelectedIndex].MonikerString);
                 vcd.VideoResolution = vcd.VideoCapabilities[resolutionsBox.SelectedIndex];
-                //Debug.WriteLine(vcd.VideoCapabilities[1].FrameSize.ToString());
-                //Debug.WriteLine(resolutionsBox.SelectedIndex);
                 videoSource = vcd;
                 videoSource.NewFrame += new NewFrameEventHandler(video_NewFrame);
                 videoSource.Start();
@@ -153,70 +193,11 @@ namespace NeuralNetwork2
             }
         }
 
-        private void tresholdTrackBar_ValueChanged(object sender, EventArgs e)
+        private void PlayButton_Click(object sender, EventArgs e)
         {
-            controller.settings.threshold = (byte)tresholdTrackBar.Value;
-            controller.settings.differenceLim = (float)tresholdTrackBar.Value / tresholdTrackBar.Maximum;
-        }
-
-        private void borderTrackBar_ValueChanged(object sender, EventArgs e)
-        {
-            controller.settings.border = borderTrackBar.Value;
-        }
-
-
-        private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
-        {
-            if (updateTmr != null)
-                updateTmr.Dispose();
-
-            //  Как-то надо ещё робота подождать, если он работает
-
-            if (videoSource != null && videoSource.IsRunning)
-            {
-                videoSource.SignalToStop();
-            }
-        }
-
-        private void MainForm_KeyDown(object sender, KeyEventArgs e)
-        {
-            switch (e.KeyCode)
-            {
-                case Keys.W: controller.settings.decTop(); Debug.WriteLine("Up!"); break;
-                case Keys.S: controller.settings.incTop(); Debug.WriteLine("Down!"); break;
-                case Keys.A: controller.settings.decLeft(); Debug.WriteLine("Left!"); break;
-                case Keys.D: controller.settings.incLeft(); Debug.WriteLine("Right!"); break;
-                case Keys.Q: controller.settings.border++; Debug.WriteLine("Plus!"); break;
-                case Keys.E: controller.settings.border--; Debug.WriteLine("Minus!"); break;
-            }
-        }
-
-        private void cmbVideoSource_SelectionChangeCommitted(object sender, EventArgs e)
-        {
-            var vcd = new VideoCaptureDevice(videoDevicesList[cmbVideoSource.SelectedIndex].MonikerString);
-            resolutionsBox.Items.Clear();
-            for (int i = 0; i < vcd.VideoCapabilities.Length; i++)
-                resolutionsBox.Items.Add(vcd.VideoCapabilities[i].FrameSize.ToString());
-            resolutionsBox.SelectedIndex = 0;
-        }
-
-        private void checkBox1_CheckedChanged(object sender, EventArgs e)
-        {
-            controller.settings.processImg = checkBox1.Checked;
-            statusLabel.Visible = checkBox1.Checked;
-        }
-
-        private void MainForm_Load(object sender, EventArgs e)
-        {
-
-        }
-
-        int i = 0;
-        private void btnSave_Click(object sender, EventArgs e)
-        {
-            var img = processedImgBox.Image;
-            img.Save($@"{i}.jpeg", ImageFormat.Jpeg);
-            i++;
+            Sample sample = controller.getSampleFromCurrent();
+            network.Predict(sample);
+            set_result(sample);
         }
     }
 }
